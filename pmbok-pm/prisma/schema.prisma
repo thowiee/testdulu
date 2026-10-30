@@ -1,0 +1,475 @@
+// Skema data PMBOK-PM
+// Catatan: SQLite tidak mendukung enum, sehingga semua status memakai String
+// dengan nilai yang didokumentasikan di komentar.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Organisasi & pengguna
+// role: ADMIN | PM | SPONSOR | MEMBER | STAKEHOLDER
+// ---------------------------------------------------------------------------
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String
+  jobTitle     String?
+  initials     String
+  color        String   @default("#2563eb")
+  createdAt    DateTime @default(now())
+
+  managedProjects   Project[]            @relation("ProjectManager")
+  sponsoredProjects Project[]            @relation("ProjectSponsor")
+  assignments       ResourceAssignment[]
+  timesheets        Timesheet[]
+  ownedActions      ActionItem[]         @relation("ActionOwner")
+  chairedMeetings   Meeting[]            @relation("MeetingChair")
+  minutedMeetings   Meeting[]            @relation("MeetingSecretary")
+  signatureRequests SignatureRequest[]
+  signatures        Signature[]
+  ownedRisks        Risk[]               @relation("RiskOwner")
+  ownedIssues       Issue[]              @relation("IssueOwner")
+  auditLogs         AuditLog[]
+  attendances       Attendee[]
+  decisions         Decision[]
+}
+
+model Portfolio {
+  id       String    @id @default(cuid())
+  name     String
+  programs Program[]
+  projects Project[]
+}
+
+model Program {
+  id          String    @id @default(cuid())
+  portfolioId String
+  name        String
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id])
+  projects    Project[]
+}
+
+// ---------------------------------------------------------------------------
+// Proyek
+// lifecycleType: predictive | hybrid | agile
+// phase: initiating | planning | execution | monitoring | closing
+// frameworkStatus: ACTIVE | COMPLETED | ON_HOLD
+// ---------------------------------------------------------------------------
+model Project {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  department      String
+  lifecycleType   String   @default("predictive")
+  phase           String   @default("execution")
+  frameworkStatus String   @default("ACTIVE")
+  portfolioId     String?
+  programId       String?
+  managerId       String
+  sponsorId       String
+  startBaseline   DateTime
+  finishBaseline  DateTime
+  bac             Float
+  contingency     Float    @default(0)
+  currency        String   @default("IDR")
+  createdAt       DateTime @default(now())
+
+  portfolio    Portfolio? @relation(fields: [portfolioId], references: [id])
+  program      Program?   @relation(fields: [programId], references: [id])
+  manager      User       @relation("ProjectManager", fields: [managerId], references: [id])
+  sponsor      User       @relation("ProjectSponsor", fields: [sponsorId], references: [id])
+
+  wbs          WbsElement[]
+  activities   Activity[]
+  milestones   Milestone[]
+  risks        Risk[]
+  issues       Issue[]
+  changes      ChangeRequest[]
+  deliverables Deliverable[]
+  stakeholders Stakeholder[]
+  assignments  ResourceAssignment[]
+  timesheets   Timesheet[]
+  meetings     Meeting[]
+  baselines    Baseline[]
+  auditLogs    AuditLog[]
+}
+
+// kind: DELIVERABLE | WORK_PACKAGE
+model WbsElement {
+  id        String  @id @default(cuid())
+  projectId String
+  parentId  String?
+  code      String
+  name      String
+  kind      String  @default("WORK_PACKAGE")
+  weight    Float   @default(0)
+  description        String?
+  acceptanceCriteria String?
+  responsible        String?
+
+  project      Project      @relation(fields: [projectId], references: [id])
+  parent       WbsElement?  @relation("WbsTree", fields: [parentId], references: [id])
+  children     WbsElement[] @relation("WbsTree")
+  activities   Activity[]
+  deliverables Deliverable[]
+
+  @@unique([projectId, code])
+}
+
+// status: TODO | ONGOING | REVIEW | DONE
+model Activity {
+  id              String    @id @default(cuid())
+  projectId       String
+  wbsId           String?
+  name            String
+  durationDays    Int
+  startBaseline   DateTime
+  finishBaseline  DateTime
+  startForecast   DateTime?
+  finishForecast  DateTime?
+  effortHours     Float     @default(0)
+  budget          Float     @default(0)
+  percentComplete Float     @default(0)
+  status          String    @default("TODO")
+  isMilestone     Boolean   @default(false)
+
+  project    Project      @relation(fields: [projectId], references: [id])
+  wbs        WbsElement?  @relation(fields: [wbsId], references: [id])
+  timesheets Timesheet[]
+  preds      Dependency[] @relation("DependencyPred")
+  succs      Dependency[] @relation("DependencySucc")
+}
+
+// type: FS | SS | FF | SF
+model Dependency {
+  id      String @id @default(cuid())
+  predId  String
+  succId  String
+  type    String @default("FS")
+  lagDays Int    @default(0)
+
+  pred Activity @relation("DependencyPred", fields: [predId], references: [id])
+  succ Activity @relation("DependencySucc", fields: [succId], references: [id])
+}
+
+// status: PENDING | DONE | LATE
+model Milestone {
+  id           String    @id @default(cuid())
+  projectId    String
+  name         String
+  baselineDate DateTime
+  forecastDate DateTime?
+  status       String    @default("PENDING")
+
+  project Project @relation(fields: [projectId], references: [id])
+}
+
+// raci: R | A | C | I
+model ResourceAssignment {
+  id            String @id @default(cuid())
+  projectId     String
+  userId        String
+  raci          String @default("R")
+  allocationPct Int    @default(100)
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+model Timesheet {
+  id         String   @id @default(cuid())
+  projectId  String
+  activityId String?
+  userId     String
+  date       DateTime
+  hours      Float
+  rate       Float
+  note       String?
+
+  project  Project   @relation(fields: [projectId], references: [id])
+  activity Activity? @relation(fields: [activityId], references: [id])
+  user     User      @relation(fields: [userId], references: [id])
+}
+
+model Baseline {
+  id         String   @id @default(cuid())
+  projectId  String
+  version    Int      @default(1)
+  kind       String   @default("COST_SCHEDULE")
+  snapshot   String
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, version, kind])
+}
+
+// status: OPEN | MITIGATING | CLOSED
+// response: AVOID | MITIGATE | TRANSFER | ACCEPT | ESCALATE
+model Risk {
+  id              String    @id @default(cuid())
+  projectId       String
+  code            String
+  title           String
+  category        String    @default("Teknis")
+  cause           String?
+  trigger         String?
+  probability     Int       @default(3)
+  impact          Int       @default(3)
+  costImpact      Float     @default(0)
+  response        String    @default("MITIGATE")
+  ownerId         String?
+  status          String    @default("OPEN")
+  sourceMeetingId String?
+  createdAt       DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  owner   User?   @relation("RiskOwner", fields: [ownerId], references: [id])
+}
+
+// status: OPEN | IN_PROGRESS | CLOSED
+model Issue {
+  id              String    @id @default(cuid())
+  projectId       String
+  title           String
+  impact          String?
+  occurrences     Int       @default(1)
+  ownerId         String?
+  dueDate         DateTime?
+  status          String    @default("OPEN")
+  sourceMeetingId String?
+  createdAt       DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  owner   User?   @relation("IssueOwner", fields: [ownerId], references: [id])
+}
+
+// status: DRAFT | APPROVED | REJECTED
+model ChangeRequest {
+  id           String    @id @default(cuid())
+  projectId    String
+  code         String
+  title        String
+  description  String?
+  impactDays   Int       @default(0)
+  impactCost   Float     @default(0)
+  status       String    @default("DRAFT")
+  decidedAt    DateTime?
+  decidedBy    String?
+  createdAt    DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+}
+
+// acceptanceStatus: PENDING | SUBMITTED | ACCEPTED | REJECTED
+model Deliverable {
+  id               String @id @default(cuid())
+  projectId        String
+  wbsId            String?
+  name             String
+  version          String @default("v1")
+  fileUrl          String?
+  acceptanceStatus String @default("PENDING")
+
+  project Project     @relation(fields: [projectId], references: [id])
+  wbs     WbsElement? @relation(fields: [wbsId], references: [id])
+}
+
+model Stakeholder {
+  id                String  @id @default(cuid())
+  projectId         String
+  name              String
+  organization      String?
+  power             Int     @default(3)
+  interest          Int     @default(3)
+  engagementCurrent String  @default("NEUTRAL")
+  engagementDesired String  @default("SUPPORTIVE")
+  channel           String?
+
+  project Project @relation(fields: [projectId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// MOM — rapat, notulen, tanda tangan, dan dampaknya
+// type: kickoff | weekly_status | gate_review | ccb | steering | closure
+// status: DRAFT | REVIEW | APPROVED | REJECTED | EXPIRED | SUPERSEDED
+// ---------------------------------------------------------------------------
+model Meeting {
+  id             String    @id @default(cuid())
+  momNo          String    @unique
+  projectId      String?
+  seriesKey      String?
+  type           String
+  title          String
+  startAt        DateTime
+  endAt          DateTime
+  location       String?
+  chairId        String
+  secretaryId    String
+  status         String    @default("DRAFT")
+  currentVersion Int       @default(1)
+  nextMeetingAt  DateTime?
+
+  project   Project?    @relation(fields: [projectId], references: [id])
+  chair     User        @relation("MeetingChair", fields: [chairId], references: [id])
+  secretary User        @relation("MeetingSecretary", fields: [secretaryId], references: [id])
+  attendees Attendee[]
+  agenda    AgendaItem[]
+  decisions Decision[]
+  actions   ActionItem[]
+  snapshots PerformanceSnapshot[]
+  versions  MomVersion[]
+}
+
+// role: CHAIR | SECRETARY | PRESENTER | MEMBER | OBSERVER
+// presence: PRESENT | LATE | APOLOGY
+model Attendee {
+  id            String    @id @default(cuid())
+  meetingId     String
+  userId        String?
+  externalName  String?
+  organization  String?
+  role          String    @default("MEMBER")
+  presence      String    @default("PRESENT")
+  acknowledgedAt DateTime?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+}
+
+model AgendaItem {
+  id          String @id @default(cuid())
+  meetingId   String
+  seq         Int
+  topic       String
+  presenterId String?
+  durationMin Int    @default(15)
+  summary     String?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+}
+
+// impactLevel: NONE | MINOR | MAJOR
+// status: OPEN | FOLLOWED_UP
+model Decision {
+  id          String   @id @default(cuid())
+  meetingId   String
+  text        String
+  rationale   String?
+  decidedById String
+  impactLevel String   @default("MINOR")
+  status      String   @default("OPEN")
+  changeId    String?
+  createdAt   DateTime @default(now())
+
+  meeting   Meeting @relation(fields: [meetingId], references: [id])
+  decidedBy User    @relation(fields: [decidedById], references: [id])
+}
+
+// status: OPEN | IN_PROGRESS | BLOCKED | DONE | CANCELLED
+// priority: LOW | MEDIUM | HIGH
+model ActionItem {
+  id           String    @id @default(cuid())
+  meetingId    String
+  text         String
+  ownerId      String
+  dueDate      DateTime
+  priority     String    @default("MEDIUM")
+  status       String    @default("OPEN")
+  completedAt  DateTime?
+  linkedType   String?
+  linkedLabel  String?
+  evidenceUrl  String?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  owner   User    @relation("ActionOwner", fields: [ownerId], references: [id])
+}
+
+model PerformanceSnapshot {
+  id            String   @id @default(cuid())
+  meetingId     String
+  snapshotDate  DateTime
+  bac           Float
+  pv            Float
+  ev            Float
+  ac            Float
+  spi           Float
+  cpi           Float
+  milestonesDone Int     @default(0)
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+}
+
+// status: DRAFT | REVIEW | APPROVED | REJECTED | VOID
+model MomVersion {
+  id                 String    @id @default(cuid())
+  meetingId          String
+  version            Int       @default(1)
+  summary            String?
+  contentHash        String
+  negativeTone       Float     @default(0)
+  status             String    @default("DRAFT")
+  lockedAt           DateTime?
+  createdAt          DateTime  @default(now())
+
+  meeting Meeting            @relation(fields: [meetingId], references: [id])
+  requests SignatureRequest[]
+
+  @@unique([meetingId, version])
+}
+
+// status: PENDING | SIGNED | DECLINED | EXPIRED | VOID
+// method pada Signature: click_reath | otp | psre
+model SignatureRequest {
+  id           String    @id @default(cuid())
+  momVersionId String
+  signerId     String
+  requiredRole String
+  orderNo      Int?
+  status       String    @default("PENDING")
+  requestedAt  DateTime  @default(now())
+  dueAt        DateTime
+
+  version MomVersion @relation(fields: [momVersionId], references: [id])
+  signer  User       @relation(fields: [signerId], references: [id])
+  signature Signature?
+}
+
+model Signature {
+  id                String   @id @default(cuid())
+  signatureRequestId String  @unique
+  signerId          String
+  method            String   @default("click_reath")
+  signedAt          DateTime @default(now())
+  ip                String?
+  userAgent         String?
+  contentHash       String
+  certificateSerial String?
+
+  request SignatureRequest @relation(fields: [signatureRequestId], references: [id])
+  signer  User             @relation(fields: [signerId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  projectId String?
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String
+  detail    String?
+  at        DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id])
+  actor   User?    @relation(fields: [actorId], references: [id])
+}
